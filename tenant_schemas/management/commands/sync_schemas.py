@@ -5,7 +5,7 @@ if "south" in settings.INSTALLED_APPS:
     from south.management.commands.syncdb import Command as SyncdbCommand
 else:
     from django.core.management.commands.syncdb import Command as SyncdbCommand
-from django.db import connection
+from django.db import connection, transaction
 from tenant_schemas.utils import get_tenant_model, get_public_schema_name
 from tenant_schemas.management.commands import SyncCommon
 
@@ -16,6 +16,7 @@ class Command(SyncCommon):
 
     def handle(self, *args, **options):
         super(Command, self).handle(*args, **options)
+        self.verbosity = int(self.options.get('verbosity'))
 
         if "south" in settings.INSTALLED_APPS:
             self.options["migrate"] = False
@@ -50,25 +51,30 @@ class Command(SyncCommon):
         for model in get_models(include_auto_created=True):
             model._meta.managed = False
 
-        verbosity = int(self.options.get('verbosity'))
         for app, model in self._iter_model_apps():
             app_name = app.__name__.replace('.models', '')
             if (app_name in included_apps and
                     not (tenant and model._meta.shared_model)):
                 model._meta.managed = model._meta.was_managed
-                if model._meta.managed and verbosity >= 3:
+                if model._meta.managed and self.verbosity >= 3:
                     self._notice("=== Include Model: %s: %s" % (app_name, model.__name__))
 
     def _sync_tenant(self, tenant):
         self._notice("=== Running syncdb for schema: %s" % tenant.schema_name)
         connection.set_tenant(tenant, include_public=False)
         SyncdbCommand().execute(**self.options)
+        # Create required views for shared models
         for model in get_models():
             if model._meta.shared_model:
-                cursor = connection.cursor()
-                cursor.execute(
-                    'CREATE VIEW {schema}.{table} AS SELECT * FROM public.{table}'.format(
-                        schema=tenant.schema_name, table=model._meta.db_table))
+                if self.verbosity >= 1:
+                    self.stdout.write('Creating view {}.{}'.format(tenant.schema_name,
+                                                                   model._meta.db_table))
+                with transaction.commit_on_success():
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        'CREATE VIEW {schema}.{table} AS SELECT * FROM public.{table}'.format(
+                            schema=tenant.schema_name,
+                            table=model._meta.db_table))
 
     def sync_tenant_apps(self, schema_name=None):
         apps = self.tenant_apps or self.installed_apps
