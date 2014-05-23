@@ -66,15 +66,51 @@ class Command(SyncCommon):
         # Create required views for shared models
         for model in get_models():
             if model._meta.shared_model:
-                if self.verbosity >= 1:
-                    self.stdout.write('Creating view {}.{}'.format(tenant.schema_name,
-                                                                   model._meta.db_table))
-                with transaction.commit_on_success():
-                    cursor = connection.cursor()
-                    cursor.execute(
-                        'CREATE VIEW {schema}.{table} AS SELECT * FROM public.{table}'.format(
-                            schema=tenant.schema_name,
-                            table=model._meta.db_table))
+                    self._create_view(tenant, model)
+
+    def _create_view(self, tenant, model):
+        """Create views and update rules for shared models
+        """
+        view = '{}.{}'.format(tenant.schema_name, model._meta.db_table)
+        view_name_for_rule = view.replace('.', '_')
+        table = 'public.{}'.format(model._meta.db_table)
+        if self.verbosity >= 1:
+            self.stdout.write('Creating view {}'.format(view))
+        statements = []
+        # Create view and rules for insert, update and delete
+        statements.append(
+            'CREATE VIEW {schema}.{table} AS SELECT * FROM public.{table}'.format(
+                schema=tenant.schema_name,
+                table=model._meta.db_table))
+        statements.append(
+            'CREATE RULE {view_rule}_INSERT AS ON INSERT TO {view}\n\t DO INSTEAD\n\t '
+            'INSERT INTO {table} ({fields}) VALUES (\n\t\t{values}) RETURNING *'.format(
+                view_rule=view_name_for_rule,
+                view=view,
+                table=table,
+                fields=', '.join(f.name for f in model._meta.fields if not f.auto_created),
+                values=',\n\t\t'.join('NEW.{}'.format(f.name)
+                                      for f in model._meta.fields if not f.auto_created)))
+        statements.append(
+            'CREATE RULE {view_rule}_UPDATE AS ON UPDATE TO {view}\n\t DO INSTEAD\n\t '
+            'UPDATE {table} SET \n\t\t{set_values}\n\t WHERE {pk} = OLD.{pk} RETURNING *'.format(
+                view_rule=view_name_for_rule,
+                view=view,
+                table=table,
+                set_values=',\n\t\t'.join('{0} = NEW.{0}'.format(f.name)
+                                          for f in model._meta.fields if not f.auto_created),
+                pk=model._meta.pk.name))
+        statements.append(
+            'CREATE RULE {view_rule}_DELETE AS ON DELETE TO {view} DO INSTEAD '
+            'DELETE FROM {table} WHERE {pk} = OLD.{pk} RETURNING *'.format(
+                view_rule=view_name_for_rule,
+                view=view,
+                table=table,
+                pk=model._meta.pk.name))
+        with transaction.commit_on_success():
+            cursor = connection.cursor()
+            for statement in statements:
+                cursor.execute(statement)
 
     def sync_tenant_apps(self, schema_name=None):
         apps = self.tenant_apps or self.installed_apps
