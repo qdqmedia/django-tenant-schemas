@@ -1,6 +1,5 @@
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from tenant_schemas.utils import get_public_schema_name, get_tenant_model
 
 
 recommended_config = """
@@ -18,4 +17,3 @@ if not settings.TENANT_APPS:
 
 if settings.INSTALLED_APPS[-1] != 'tenant_schemas':
     print recommended_config
-
