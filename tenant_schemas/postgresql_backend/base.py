@@ -74,7 +74,7 @@ class DatabaseWrapper(original_backend.DatabaseWrapper):
         self.schema_name = get_public_schema_name()
         self.set_settings_schema(self.schema_name)
         self.search_path_set = False
-        
+
     def set_settings_schema(self, schema_name):
         self.settings_dict['SCHEMA'] = schema_name
 
