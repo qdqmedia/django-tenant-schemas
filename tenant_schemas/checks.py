@@ -121,6 +121,7 @@ Run `python manage.py sync_schemas --shared` and `python manage.py migrate_schem
 
 
 def _get_recommended_config():
+    return
     if IS_DJANGO17:
         return """
 Warning: You should put 'tenant_schemas' at the start of
