@@ -45,8 +45,8 @@ def tenant_schemas_check(app_configs, **kwargs):
     else:
         ideal_app_position = -1
 
-    if settings.INSTALLED_APPS[ideal_app_position] != 'tenant_schemas':
-        print _get_recommended_config()
+    # if settings.INSTALLED_APPS[ideal_app_position] != 'tenant_schemas':
+    #     print _get_recommended_config()
 
     if hasattr(settings, 'PG_EXTRA_SEARCH_PATHS'):
         if get_public_schema_name() in settings.PG_EXTRA_SEARCH_PATHS:
@@ -121,7 +121,6 @@ Run `python manage.py sync_schemas --shared` and `python manage.py migrate_schem
 
 
 def _get_recommended_config():
-    return
     if IS_DJANGO17:
         return """
 Warning: You should put 'tenant_schemas' at the start of
