@@ -2,22 +2,36 @@ import re
 import warnings
 from django.conf import settings
 from django.utils.importlib import import_module
-from django.core.exceptions import ImproperlyConfigured
-from tenant_schemas.utils import get_public_schema_name
+from django.core.exceptions import ImproperlyConfigured, ValidationError
+from tenant_schemas.utils import get_public_schema_name, get_limit_set_calls
 
 ORIGINAL_BACKEND = getattr(settings, 'ORIGINAL_BACKEND', 'django.db.backends.postgresql_psycopg2')
 
-original_backend = import_module('.base', ORIGINAL_BACKEND)
+original_backend = import_module(ORIGINAL_BACKEND + '.base')
 
 EXTRA_SEARCH_PATHS = getattr(settings, 'PG_EXTRA_SEARCH_PATHS', [])
 
 # from the postgresql doc
-SQL_IDENTIFIER_RE = re.compile('^[_a-zA-Z][_a-zA-Z0-9]{,62}$')
+SQL_IDENTIFIER_RE = re.compile(r'^[_a-zA-Z][_a-zA-Z0-9]{,62}$')
+SQL_SCHEMA_NAME_RESERVED_RE = re.compile(r'^pg_', re.IGNORECASE)
+
+
+def _is_valid_identifier(identifier):
+    return bool(SQL_IDENTIFIER_RE.match(identifier))
 
 
 def _check_identifier(identifier):
-    if not SQL_IDENTIFIER_RE.match(identifier):
-        raise RuntimeError("Invalid string used for the schema name.")
+    if not _is_valid_identifier(identifier):
+        raise ValidationError("Invalid string used for the identifier.")
+
+
+def _is_valid_schema_name(name):
+    return _is_valid_identifier(name) and not SQL_SCHEMA_NAME_RESERVED_RE.match(name)
+
+
+def _check_schema_name(name):
+    if not _is_valid_schema_name(name):
+        raise ValidationError("Invalid string used for the schema name.")
 
 
 class DatabaseWrapper(original_backend.DatabaseWrapper):
@@ -39,6 +53,7 @@ class DatabaseWrapper(original_backend.DatabaseWrapper):
         self.schema_name = tenant.schema_name
         self.include_public_schema = include_public
         self.set_settings_schema(self.schema_name)
+        self.search_path_set = False
 
     def set_schema(self, schema_name, include_public=True):
         """
@@ -49,6 +64,7 @@ class DatabaseWrapper(original_backend.DatabaseWrapper):
         self.schema_name = schema_name
         self.include_public_schema = include_public
         self.set_settings_schema(schema_name)
+        self.search_path_set = False
 
     def set_schema_to_public(self):
         """
@@ -57,7 +73,8 @@ class DatabaseWrapper(original_backend.DatabaseWrapper):
         self.tenant = FakeTenant(schema_name=get_public_schema_name())
         self.schema_name = get_public_schema_name()
         self.set_settings_schema(self.schema_name)
-        
+        self.search_path_set = False
+
     def set_settings_schema(self, schema_name):
         self.settings_dict['SCHEMA'] = schema_name
 
@@ -78,25 +95,29 @@ class DatabaseWrapper(original_backend.DatabaseWrapper):
         """
         cursor = super(DatabaseWrapper, self)._cursor()
 
-        # Actual search_path modification for the cursor. Database will
-        # search schemata from left to right when looking for the object
-        # (table, index, sequence, etc.).
-        if not self.schema_name:
-            raise ImproperlyConfigured("Database schema not set. Did you forget "
-                                       "to call set_schema() or set_tenant()?")
-        _check_identifier(self.schema_name)
-        public_schema_name = get_public_schema_name()
-        search_paths = []
+        # optionally limit the number of executions - under load, the execution
+        # of `set search_path` can be quite time consuming
+        if (not get_limit_set_calls()) or not self.search_path_set:
+            # Actual search_path modification for the cursor. Database will
+            # search schemata from left to right when looking for the object
+            # (table, index, sequence, etc.).
+            if not self.schema_name:
+                raise ImproperlyConfigured("Database schema not set. Did you forget "
+                                           "to call set_schema() or set_tenant()?")
+            _check_schema_name(self.schema_name)
+            public_schema_name = get_public_schema_name()
+            search_paths = []
 
-        if self.schema_name == public_schema_name:
-            search_paths = [public_schema_name]
-        elif self.include_public_schema:
-            search_paths = [self.schema_name, public_schema_name]
-        else:
-            search_paths = [self.schema_name]
+            if self.schema_name == public_schema_name:
+                search_paths = [public_schema_name]
+            elif self.include_public_schema:
+                search_paths = [self.schema_name, public_schema_name]
+            else:
+                search_paths = [self.schema_name]
 
-        search_paths.extend(EXTRA_SEARCH_PATHS)
-        cursor.execute('SET search_path = {0}'.format(','.join(search_paths)))
+            search_paths.extend(EXTRA_SEARCH_PATHS)
+            cursor.execute('SET search_path = {0}'.format(','.join(search_paths)))
+            self.search_path_set = True
         return cursor
 
 

@@ -39,6 +39,10 @@ def get_public_schema_name():
     return getattr(settings, 'PUBLIC_SCHEMA_NAME', 'public')
 
 
+def get_limit_set_calls():
+    return getattr(settings, 'TENANT_LIMIT_SET_CALLS', False)
+
+
 def clean_tenant_url(url_string):
     """
     Removes the TENANT_TOKEN from a particular string
@@ -51,12 +55,18 @@ def clean_tenant_url(url_string):
 
 
 def remove_www_and_dev(hostname):
+    """ 
+    Legacy function - just in case someone is still using the old name
     """
-    Removes www. and dev. from the beginning of the address. Only for
+    return remove_www(hostname)
+
+def remove_www(hostname):
+    """
+    Removes www. from the beginning of the address. Only for
     routing purposes. www.test.com/login/ and test.com/login/ should
     find the same tenant.
     """
-    if hostname.startswith("www.") or hostname.startswith("dev."):
+    if hostname.startswith("www."):
         return hostname[4:]
 
     return hostname
@@ -74,7 +84,7 @@ def schema_exists(schema_name):
     cursor = connection.cursor()
 
     # check if this schema already exists in the db
-    sql = 'SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = %s)'
+    sql = 'SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE LOWER(nspname) = LOWER(%s))'
     cursor.execute(sql, (schema_name, ))
 
     row = cursor.fetchone()

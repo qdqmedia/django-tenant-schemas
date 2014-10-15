@@ -59,13 +59,13 @@ You can also use the option ``--tenant`` to only sync tenant apps or ``--shared`
 
 .. code-block:: bash
 
-	./manage.py sync_schemas --shared # will only sync the public schema
+    ./manage.py sync_schemas --shared # will only sync the public schema
 
 We've also packed south's migrate command in a compatible way with this app. It will also respect the ``SHARED_APPS`` and ``TENANT_APPS`` settings, so if you're migrating the ``public`` schema it will only migrate ``SHARED_APPS``. If you're migrating tenants, it will only migrate ``TENANT_APPS``.
 
 .. code-block:: bash
 
-	./manage.py migrate_schemas
+    ./manage.py migrate_schemas
 
 The options given to ``migrate_schemas`` are also passed to every ``migrate``. Hence you may find handy
 
@@ -92,3 +92,21 @@ If you don't specify a schema, you will be prompted to enter one. Otherwise, you
 .. code-block:: bash
 
     ./manage.py tenant_command createsuperuser --schema=customer1
+
+
+Performance Considerations
+--------------------------
+
+The hook for ensuring the schema search_path is set properly is the ``DatabaseWrapper`` method ``_cursor()``, which sets the path on every database operation. However, in a high volume environment, this can take considerable time. A flag, ``TENANT_LIMIT_SET_CALLS``, is available to keep the number of calls to a minimum. The flag may be set in ``settings.py`` as follows:
+
+.. code-block:: python
+
+    #in settings.py:
+    TENANT_LIMIT_SET_CALLS = True
+
+When set, ``django-tenant-schemas`` will set the search path only once per request. The default is ``False``.
+
+
+Third Party Apps
+----------------
+Support for Celery is available at `tenant-schemas-celery <https://github.com/maciej-gol/tenant-schemas-celery>`_.
