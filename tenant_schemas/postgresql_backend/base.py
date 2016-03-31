@@ -4,6 +4,8 @@ from django.conf import settings
 from django.utils.importlib import import_module
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from tenant_schemas.utils import get_public_schema_name, get_limit_set_calls
+import django.db.utils
+import psycopg2
 
 ORIGINAL_BACKEND = getattr(settings, 'ORIGINAL_BACKEND', 'django.db.backends.postgresql_psycopg2')
 
@@ -116,8 +118,16 @@ class DatabaseWrapper(original_backend.DatabaseWrapper):
                 search_paths = [self.schema_name]
 
             search_paths.extend(EXTRA_SEARCH_PATHS)
-            cursor.execute('SET search_path = {0}'.format(','.join(search_paths)))
-            self.search_path_set = True
+            # In the event that an error already happened in this transaction and we are going
+            # to rollback we should just ignore database error when setting the search_path
+            # if the next instruction is not a rollback it will just fail also, so
+            # we do not have to worry that it's not the good one
+            try:
+                cursor.execute('SET search_path = {0}'.format(','.join(search_paths)))
+            except (django.db.utils.DatabaseError, psycopg2.InternalError):
+                self.search_path_set = False
+            else:
+                self.search_path_set = True
         return cursor
 
 
